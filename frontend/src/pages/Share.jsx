@@ -6,24 +6,39 @@ import Map from '../components/Map';
 import api from '../services/api';
 import io from 'socket.io-client';
 
+const SESSION_KEY = 'active_share_session';
+
 const SharePage = () => {
   const navigate = useNavigate();
   const socketRef = useRef(null);
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    return saved ? JSON.parse(saved) : null;
+  });
   const [location, setLocation] = useState(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [viewers, setViewers] = useState([]);
   const [showViewers, setShowViewers] = useState(false);
-  const [isSharing, setIsSharing] = useState(false);
+  const [isSharing, setIsSharing] = useState(() => !!sessionStorage.getItem(SESSION_KEY));
   const [copied, setCopied] = useState(false);
 
+  // Connect socket and rejoin session if one was active before refresh
   useEffect(() => {
     socketRef.current = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
       withCredentials: true,
     });
     const socket = socketRef.current;
+
     socket.on('viewer-count-update', (count) => setViewerCount(count));
     socket.on('viewers-update', (list) => setViewers(list));
+
+    // Rejoin session room after reconnect
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (saved) {
+      const savedSession = JSON.parse(saved);
+      socket.emit('join-session', { code: savedSession.code, role: 'sharer' });
+    }
+
     return () => socket.disconnect();
   }, []);
 
@@ -32,6 +47,7 @@ const SharePage = () => {
       const res = await api.post('/tracking/start');
       setSession(res.data);
       setIsSharing(true);
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(res.data));
       socketRef.current.emit('join-session', { code: res.data.code, role: 'sharer' });
     } catch (error) {
       console.error('Failed to start sharing');
@@ -43,6 +59,7 @@ const SharePage = () => {
     try {
       await api.post('/tracking/stop', { code: session.code });
       socketRef.current.emit('stop-sharing', { code: session.code });
+      sessionStorage.removeItem(SESSION_KEY);
       setIsSharing(false);
       setSession(null);
       navigate('/');
@@ -54,24 +71,47 @@ const SharePage = () => {
   const updateLocation = useCallback((pos) => {
     const newLocation = [pos.coords.latitude, pos.coords.longitude];
     setLocation(newLocation);
-    if (isSharing && session) {
+    if (socketRef.current && session) {
       socketRef.current.emit('location-update', { code: session.code, location: newLocation });
     }
-  }, [isSharing, session]);
+  }, [session]);
 
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(updateLocation);
-
     const watchId = navigator.geolocation.watchPosition(updateLocation, (err) => console.error(err), {
       enableHighAccuracy: true,
       maximumAge: 0,
       timeout: 10000,
     });
-
     return () => navigator.geolocation.clearWatch(watchId);
   }, [updateLocation]);
 
-  const kickViewer = (socketId) => {
+  // Cleanup sharing on back navigation or tab close
+  useEffect(() => {
+    if (!isSharing || !session) return;
+
+    const cleanup = () => {
+      api.post('/tracking/stop', { code: session.code }).catch(() => {});
+      socketRef.current?.emit('stop-sharing', { code: session.code });
+      sessionStorage.removeItem(SESSION_KEY);
+    };
+
+    // Tab close / refresh
+    window.addEventListener('beforeunload', cleanup);
+
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+    };
+  }, [isSharing, session]);
+
+  const handleBack = async () => {
+    if (isSharing && session) {
+      await stopSharing();
+    } else {
+      navigate('/');
+    }
+  };
+
     socketRef.current.emit('kick-viewer', { code: session.code, socketId });
   };
 
@@ -85,7 +125,7 @@ const SharePage = () => {
   return (
     <div className="h-screen flex flex-col bg-dark overflow-hidden">
       <header className="fixed top-0 left-0 right-0 p-4 z-50 flex justify-between items-center bg-gradient-to-b from-dark/80 to-transparent">
-        <button onClick={() => navigate('/')} className="p-2 glass-morphism rounded-full">
+        <button onClick={handleBack} className="p-2 glass-morphism rounded-full">
           <ChevronLeft size={24} />
         </button>
         <div className="flex items-center gap-2 glass-morphism px-4 py-2 rounded-full text-sm font-bold cursor-pointer" onClick={() => setShowViewers(true)}>
@@ -153,13 +193,13 @@ const SharePage = () => {
 
       <AnimatePresence>
         {!isSharing ? (
-          <motion.div 
+          <motion.div
             initial={{ y: 100 }}
             animate={{ y: 0 }}
             exit={{ y: 100 }}
             className="fixed bottom-0 left-0 right-0 p-6 z-50 bg-gradient-to-t from-dark to-dark/60 backdrop-blur-sm"
           >
-            <button 
+            <button
               onClick={startSharing}
               className="w-full py-4 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-primary-dark transition-all shadow-xl shadow-primary/20"
             >
@@ -168,7 +208,7 @@ const SharePage = () => {
             </button>
           </motion.div>
         ) : (
-          <motion.div 
+          <motion.div
             initial={{ y: 100 }}
             animate={{ y: 0 }}
             className="fixed bottom-0 left-0 right-0 p-6 z-50 rounded-t-3xl glass-morphism border-x-0 border-b-0"
@@ -192,7 +232,7 @@ const SharePage = () => {
             </div>
 
             <div className="flex gap-4">
-               <button className="flex-1 py-3 bg-dark-lighter border border-white/10 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-dark-lightest transition-colors">
+              <button className="flex-1 py-3 bg-dark-lighter border border-white/10 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-dark-lightest transition-colors">
                 <RefreshCw size={18} />
                 Refresh Code
               </button>

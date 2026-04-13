@@ -6,21 +6,25 @@ const setupTrackingSocket = (io) => {
   const getViewers = (code) =>
     Object.values(socketMeta).filter((m) => m.code === code && m.role === 'viewer');
 
+  const broadcastViewers = (code) => {
+    const viewers = getViewers(code);
+    io.to(code).emit('viewer-count-update', viewers.length);
+    io.to(code).emit('viewers-update', viewers.map((v) => ({ socketId: v.socketId, ...v.user })));
+  };
+
   io.on('connection', (socket) => {
-    socket.on('join-session', async ({ code, role, user }) => {
+    socket.on('join-session', ({ code, role, user }) => {
       socket.join(code);
-      socketMeta[socket.id] = { code, role, user: user || null };
+      socketMeta[socket.id] = { socketId: socket.id, code, role, user: user || {} };
 
       if (role === 'viewer') {
-        const session = await TrackingSession.findOneAndUpdate(
+        // Update DB total views only (not live count)
+        TrackingSession.findOneAndUpdate(
           { code, status: 'active' },
-          { $inc: { viewerCount: 1 } },
-          { new: true }
-        );
-        if (session) {
-          io.to(code).emit('viewer-count-update', session.viewerCount);
-          io.to(code).emit('viewers-update', getViewers(code).map((v) => ({ socketId: v.socketId, ...v.user })));
-        }
+          { $inc: { totalViews: 1 } }
+        ).catch(() => {});
+
+        broadcastViewers(code);
       }
     });
 
@@ -28,46 +32,27 @@ const setupTrackingSocket = (io) => {
       socket.to(code).emit('location-broadcast', location);
     });
 
-    socket.on('stop-sharing', async ({ code }) => {
+    socket.on('stop-sharing', ({ code }) => {
       io.to(code).emit('session-ended');
       socket.leave(code);
     });
 
-    socket.on('kick-viewer', ({ code, socketId }) => {
+    socket.on('kick-viewer', ({ socketId }) => {
       io.to(socketId).emit('kicked');
     });
 
-    socket.on('leave-session', async ({ code, role }) => {
+    socket.on('leave-session', ({ code, role }) => {
       socket.leave(code);
       delete socketMeta[socket.id];
-      if (role === 'viewer') {
-        const session = await TrackingSession.findOneAndUpdate(
-          { code, status: 'active' },
-          { $inc: { viewerCount: -1 } },
-          { new: true }
-        );
-        if (session) {
-          io.to(code).emit('viewer-count-update', Math.max(0, session.viewerCount));
-          io.to(code).emit('viewers-update', getViewers(code).map((v) => ({ socketId: v.socketId, ...v.user })));
-        }
-      }
+      if (role === 'viewer') broadcastViewers(code);
     });
 
-    socket.on('disconnect', async () => {
+    socket.on('disconnect', () => {
       const meta = socketMeta[socket.id];
-      if (meta?.role === 'viewer') {
-        const session = await TrackingSession.findOneAndUpdate(
-          { code: meta.code, status: 'active' },
-          { $inc: { viewerCount: -1 } },
-          { new: true }
-        );
-        if (session) {
-          delete socketMeta[socket.id];
-          io.to(meta.code).emit('viewer-count-update', Math.max(0, session.viewerCount));
-          io.to(meta.code).emit('viewers-update', getViewers(meta.code).map((v) => ({ socketId: v.socketId, ...v.user })));
-        }
+      if (meta) {
+        delete socketMeta[socket.id];
+        if (meta.role === 'viewer') broadcastViewers(meta.code);
       }
-      delete socketMeta[socket.id];
     });
   });
 };

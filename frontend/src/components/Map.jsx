@@ -1,101 +1,81 @@
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import 'leaflet/dist/leaflet.css';
 
-const createMarkerIcon = (color, pulse = false) =>
-  L.divIcon({
+// Fix for default marker icon in Leaflet + React
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const createMarkerIcon = (color) => {
+  return L.divIcon({
     className: 'custom-pin',
     html: `<div style="
       background-color: ${color};
-      width: 18px; height: 18px;
-      border-radius: 50%;
-      border: 3px solid white;
-      box-shadow: 0 0 0 ${pulse ? '6px' : '4px'} ${color}55;
+      width: 20px;
+      height: 20px;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      border: 2px solid white;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
     "></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-    popupAnchor: [0, -12],
+    iconSize: [20, 20],
+    iconAnchor: [10, 20],
+    popupAnchor: [0, -20]
   });
+};
 
-const myIcon = createMarkerIcon('#22c55e', true);   // green - me
-const sharerIcon = createMarkerIcon('#3b82f6', true); // blue - sharer
+const redIcon = createMarkerIcon('#ef4444'); // Tailwind red-500
+const blueIcon = createMarkerIcon('#3b82f6'); // Tailwind blue-500
 
 const RecenterMap = ({ position }) => {
   const map = useMap();
   useEffect(() => {
-    if (position) map.flyTo(position, 15, { animate: true, duration: 1.5 });
+    if (position && position[0] !== 0) {
+      map.flyTo(position, 15, {
+        animate: true,
+        duration: 1.5
+      });
+    }
   }, [position, map]);
   return null;
 };
 
-const OSRM_PROFILES = {
-  driving: 'driving',
-  cycling: 'cycling',
-  walking: 'foot',
-};
-
-const fetchRoute = async (from, to, mode) => {
-  const profile = OSRM_PROFILES[mode] || 'driving';
-  const url = `https://router.project-osrm.org/route/v1/${profile}/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
-  const res = await fetch(url);
-  const data = await res.json();
-  if (data.routes?.[0]) {
-    return data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-  }
-  return null;
-};
-
-const ROUTE_COLORS = {
-  driving: '#f59e0b',
-  cycling: '#10b981',
-  walking: '#a78bfa',
-};
-
-const Map = ({ position, otherPosition, path = [], routeMode = 'driving', showRoute = false }) => {
-  const center = position || otherPosition || [20.5937, 78.9629];
-  const [routeCoords, setRouteCoords] = useState(null);
-
-  useEffect(() => {
-    if (!showRoute || !position || !otherPosition) {
-      setRouteCoords(null);
-      return;
-    }
-    fetchRoute(position, otherPosition, routeMode).then(setRouteCoords);
-  }, [position, otherPosition, routeMode, showRoute]);
+const Map = ({ position, otherPosition, path = [] }) => {
+  const center = position || [20.5937, 78.9629]; // Default to India center
 
   return (
     <div className="w-full h-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl relative bg-dark-lighter">
-      <MapContainer center={center} zoom={15} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
+      <MapContainer center={center} zoom={15} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }}>
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
-
+        
         {position && (
-          <Marker position={position} icon={myIcon}>
+          <Marker position={position} icon={redIcon}>
             <Popup>You are here</Popup>
           </Marker>
         )}
 
         {otherPosition && (
-          <Marker position={otherPosition} icon={sharerIcon}>
+          <Marker position={otherPosition} icon={blueIcon}>
             <Popup>Sharer's location</Popup>
           </Marker>
         )}
 
-        {/* Live path trail */}
-        {path.length > 1 && (
-          <Polyline positions={path} color="#3b82f6" weight={3} opacity={0.4} dashArray="6 6" />
+        {path.length > 0 && (
+          <Polyline positions={path} color="#3b82f6" weight={4} opacity={0.6} />
         )}
 
-        {/* Route line */}
-        {routeCoords && (
-          <Polyline positions={routeCoords} color={ROUTE_COLORS[routeMode]} weight={5} opacity={0.8} />
-        )}
-
-        <RecenterMap position={otherPosition || position} />
+        <RecenterMap position={position || otherPosition} />
       </MapContainer>
+      
+      <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2">
+        <div className="bg-dark/80 backdrop-blur-md p-2 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-white/10">
+          Live Tracking Active
+        </div>
+      </div>
     </div>
   );
 };

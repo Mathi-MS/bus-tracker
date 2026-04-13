@@ -32,10 +32,6 @@ const trackingSessionSchema = new mongoose.Schema({
       default: [0, 0],
     },
   },
-  viewerCount: {
-    type: Number,
-    default: 0,
-  },
   totalViews: {
     type: Number,
     default: 0,
