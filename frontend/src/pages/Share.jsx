@@ -22,7 +22,6 @@ const SharePage = () => {
   const [isSharing, setIsSharing] = useState(() => !!sessionStorage.getItem(SESSION_KEY));
   const [copied, setCopied] = useState(false);
 
-  // Connect socket and rejoin session if one was active before refresh
   useEffect(() => {
     socketRef.current = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
       withCredentials: true,
@@ -32,7 +31,6 @@ const SharePage = () => {
     socket.on('viewer-count-update', (count) => setViewerCount(count));
     socket.on('viewers-update', (list) => setViewers(list));
 
-    // Rejoin session room after reconnect
     const saved = sessionStorage.getItem(SESSION_KEY);
     if (saved) {
       const savedSession = JSON.parse(saved);
@@ -41,6 +39,19 @@ const SharePage = () => {
 
     return () => socket.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!isSharing || !session) return;
+
+    const cleanup = () => {
+      api.post('/tracking/stop', { code: session.code }).catch(() => {});
+      socketRef.current?.emit('stop-sharing', { code: session.code });
+      sessionStorage.removeItem(SESSION_KEY);
+    };
+
+    window.addEventListener('beforeunload', cleanup);
+    return () => window.removeEventListener('beforeunload', cleanup);
+  }, [isSharing, session]);
 
   const startSharing = async () => {
     try {
@@ -68,6 +79,14 @@ const SharePage = () => {
     }
   };
 
+  const handleBack = async () => {
+    if (isSharing && session) {
+      await stopSharing();
+    } else {
+      navigate('/');
+    }
+  };
+
   const updateLocation = useCallback((pos) => {
     const newLocation = [pos.coords.latitude, pos.coords.longitude];
     setLocation(newLocation);
@@ -86,32 +105,7 @@ const SharePage = () => {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [updateLocation]);
 
-  // Cleanup sharing on back navigation or tab close
-  useEffect(() => {
-    if (!isSharing || !session) return;
-
-    const cleanup = () => {
-      api.post('/tracking/stop', { code: session.code }).catch(() => {});
-      socketRef.current?.emit('stop-sharing', { code: session.code });
-      sessionStorage.removeItem(SESSION_KEY);
-    };
-
-    // Tab close / refresh
-    window.addEventListener('beforeunload', cleanup);
-
-    return () => {
-      window.removeEventListener('beforeunload', cleanup);
-    };
-  }, [isSharing, session]);
-
-  const handleBack = async () => {
-    if (isSharing && session) {
-      await stopSharing();
-    } else {
-      navigate('/');
-    }
-  };
-
+  const kickViewer = (socketId) => {
     socketRef.current.emit('kick-viewer', { code: session.code, socketId });
   };
 
@@ -128,7 +122,10 @@ const SharePage = () => {
         <button onClick={handleBack} className="p-2 glass-morphism rounded-full">
           <ChevronLeft size={24} />
         </button>
-        <div className="flex items-center gap-2 glass-morphism px-4 py-2 rounded-full text-sm font-bold cursor-pointer" onClick={() => setShowViewers(true)}>
+        <div
+          className="flex items-center gap-2 glass-morphism px-4 py-2 rounded-full text-sm font-bold cursor-pointer"
+          onClick={() => setShowViewers(true)}
+        >
           <Users size={16} className="text-primary" />
           {viewerCount} Viewers
         </div>
