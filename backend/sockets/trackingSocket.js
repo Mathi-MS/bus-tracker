@@ -1,13 +1,15 @@
 const TrackingSession = require('../models/TrackingSession');
 
 const setupTrackingSocket = (io) => {
-  // Track socket metadata for cleanup on disconnect
   const socketMeta = {};
 
+  const getViewers = (code) =>
+    Object.values(socketMeta).filter((m) => m.code === code && m.role === 'viewer');
+
   io.on('connection', (socket) => {
-    socket.on('join-session', async ({ code, role }) => {
+    socket.on('join-session', async ({ code, role, user }) => {
       socket.join(code);
-      socketMeta[socket.id] = { code, role };
+      socketMeta[socket.id] = { code, role, user: user || null };
 
       if (role === 'viewer') {
         const session = await TrackingSession.findOneAndUpdate(
@@ -17,6 +19,7 @@ const setupTrackingSocket = (io) => {
         );
         if (session) {
           io.to(code).emit('viewer-count-update', session.viewerCount);
+          io.to(code).emit('viewers-update', getViewers(code).map((v) => ({ socketId: v.socketId, ...v.user })));
         }
       }
     });
@@ -30,6 +33,10 @@ const setupTrackingSocket = (io) => {
       socket.leave(code);
     });
 
+    socket.on('kick-viewer', ({ code, socketId }) => {
+      io.to(socketId).emit('kicked');
+    });
+
     socket.on('leave-session', async ({ code, role }) => {
       socket.leave(code);
       delete socketMeta[socket.id];
@@ -41,6 +48,7 @@ const setupTrackingSocket = (io) => {
         );
         if (session) {
           io.to(code).emit('viewer-count-update', Math.max(0, session.viewerCount));
+          io.to(code).emit('viewers-update', getViewers(code).map((v) => ({ socketId: v.socketId, ...v.user })));
         }
       }
     });
@@ -54,7 +62,9 @@ const setupTrackingSocket = (io) => {
           { new: true }
         );
         if (session) {
+          delete socketMeta[socket.id];
           io.to(meta.code).emit('viewer-count-update', Math.max(0, session.viewerCount));
+          io.to(meta.code).emit('viewers-update', getViewers(meta.code).map((v) => ({ socketId: v.socketId, ...v.user })));
         }
       }
       delete socketMeta[socket.id];

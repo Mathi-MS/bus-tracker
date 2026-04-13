@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, MapPin, Navigation, Info } from 'lucide-react';
+import { ChevronLeft, MapPin, Navigation, Info, Route } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import { selectCurrentUser } from '../store/authSlice';
 import Map from '../components/Map';
 import api from '../services/api';
 import io from 'socket.io-client';
@@ -17,6 +19,10 @@ const TrackPage = () => {
   const [isTracking, setIsTracking] = useState(false);
   const [path, setPath] = useState([]);
   const [error, setError] = useState('');
+  const [routeMode, setRouteMode] = useState('driving');
+  const [showRoute, setShowRoute] = useState(false);
+
+  const currentUser = useSelector(selectCurrentUser);
 
   const joinSession = async (code) => {
     try {
@@ -24,7 +30,11 @@ const TrackPage = () => {
       setSession(res.data);
       setIsTracking(true);
       setError('');
-      socketRef.current.emit('join-session', { code: res.data.code, role: 'viewer' });
+      socketRef.current.emit('join-session', {
+        code: res.data.code,
+        role: 'viewer',
+        user: { socketId: socketRef.current.id, name: currentUser?.name, picture: currentUser?.picture },
+      });
     } catch (err) {
       setError('Active session not found. Please check the code.');
       setIsTracking(false);
@@ -48,9 +58,13 @@ const TrackPage = () => {
       setError('The sharing session has ended.');
     });
 
-    return () => {
-      socket.disconnect();
-    };
+    socket.on('kicked', () => {
+      setIsTracking(false);
+      setSession(null);
+      setError('You have been removed from this session.');
+    });
+
+    return () => socket.disconnect();
   }, []);
 
   useEffect(() => {
@@ -98,7 +112,13 @@ const TrackPage = () => {
       </header>
 
       <main className="flex-1 relative z-0">
-        <Map position={myLocation} otherPosition={sharerLocation} path={path} />
+        <Map
+          position={myLocation}
+          otherPosition={sharerLocation}
+          path={path}
+          routeMode={routeMode}
+          showRoute={showRoute && !!myLocation && !!sharerLocation}
+        />
       </main>
 
       {!isTracking && (
@@ -158,6 +178,43 @@ const TrackPage = () => {
               <h4 className="text-lg font-bold">{session?.code}</h4>
             </div>
           </div>
+
+          {/* Route mode selector */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-dark-lightest font-bold uppercase flex items-center gap-1">
+                <Route size={12} /> Route
+              </span>
+              <button
+                onClick={() => setShowRoute(p => !p)}
+                className={`text-xs font-bold px-3 py-1 rounded-full transition-colors ${
+                  showRoute ? 'bg-secondary text-white' : 'bg-white/10 text-dark-lightest'
+                }`}
+              >
+                {showRoute ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              {[
+                { key: 'driving', label: '🚌 Bus/Car' },
+                { key: 'cycling', label: '🚲 Bike' },
+                { key: 'walking', label: '🚶 Walk' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => { setRouteMode(key); setShowRoute(true); }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-colors ${
+                    routeMode === key && showRoute
+                      ? 'bg-secondary text-white'
+                      : 'bg-white/5 text-dark-lightest hover:bg-white/10'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center gap-2 text-xs text-dark-lightest">
             <Info size={14} />
             <span>Tracking is active as long as the sharer has the app open.</span>

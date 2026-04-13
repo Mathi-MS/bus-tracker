@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, Share, StopCircle, RefreshCw, Users, Copy, Check } from 'lucide-react';
+import { ChevronLeft, Share, StopCircle, RefreshCw, Users, Copy, Check, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Map from '../components/Map';
 import api from '../services/api';
@@ -12,6 +12,8 @@ const SharePage = () => {
   const [session, setSession] = useState(null);
   const [location, setLocation] = useState(null);
   const [viewerCount, setViewerCount] = useState(0);
+  const [viewers, setViewers] = useState([]);
+  const [showViewers, setShowViewers] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -21,6 +23,7 @@ const SharePage = () => {
     });
     const socket = socketRef.current;
     socket.on('viewer-count-update', (count) => setViewerCount(count));
+    socket.on('viewers-update', (list) => setViewers(list));
     return () => socket.disconnect();
   }, []);
 
@@ -68,7 +71,10 @@ const SharePage = () => {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [updateLocation]);
 
-  const copyLink = () => {
+  const kickViewer = (socketId) => {
+    socketRef.current.emit('kick-viewer', { code: session.code, socketId });
+  };
+
     const link = `${window.location.origin}/track/${session.code}`;
     navigator.clipboard.writeText(link);
     setCopied(true);
@@ -81,7 +87,7 @@ const SharePage = () => {
         <button onClick={() => navigate('/')} className="p-2 glass-morphism rounded-full">
           <ChevronLeft size={24} />
         </button>
-        <div className="flex items-center gap-2 glass-morphism px-4 py-2 rounded-full text-sm font-bold">
+        <div className="flex items-center gap-2 glass-morphism px-4 py-2 rounded-full text-sm font-bold cursor-pointer" onClick={() => setShowViewers(true)}>
           <Users size={16} className="text-primary" />
           {viewerCount} Viewers
         </div>
@@ -90,6 +96,59 @@ const SharePage = () => {
       <main className="flex-1 relative z-0 mt-4">
         <Map position={location} />
       </main>
+
+      <AnimatePresence>
+        {showViewers && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end justify-center"
+            onClick={() => setShowViewers(false)}
+          >
+            <motion.div
+              initial={{ y: 100 }}
+              animate={{ y: 0 }}
+              exit={{ y: 100 }}
+              className="w-full max-w-md glass-morphism rounded-t-3xl p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-lg">Viewers ({viewerCount})</h3>
+                <button onClick={() => setShowViewers(false)} className="p-1 hover:bg-white/10 rounded-full">
+                  <X size={20} />
+                </button>
+              </div>
+              {viewers.length === 0 ? (
+                <p className="text-dark-lightest text-sm text-center py-4">No viewers yet</p>
+              ) : (
+                <ul className="space-y-3 max-h-64 overflow-y-auto">
+                  {viewers.map((v) => (
+                    <li key={v.socketId} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        {v.picture ? (
+                          <img src={v.picture} className="w-9 h-9 rounded-full" alt={v.name} />
+                        ) : (
+                          <div className="w-9 h-9 rounded-full bg-primary/30 flex items-center justify-center text-sm font-bold">
+                            {v.name?.[0] || '?'}
+                          </div>
+                        )}
+                        <span className="text-sm font-semibold">{v.name || 'Anonymous'}</span>
+                      </div>
+                      <button
+                        onClick={() => kickViewer(v.socketId)}
+                        className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-full transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {!isSharing ? (
