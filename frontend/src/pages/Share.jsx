@@ -75,6 +75,7 @@ const SharePage = () => {
     socketRef.current.emit('kick-viewer', { code: session.code, socketId });
   };
 
+  const copyLink = () => {
     const link = `${window.location.origin}/track/${session.code}`;
     navigator.clipboard.writeText(link);
     setCopied(true);
