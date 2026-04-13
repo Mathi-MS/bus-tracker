@@ -27,7 +27,11 @@ api.interceptors.response.use(
       originalRequest._retry = true;
       
       try {
-        const response = await axios.post('/auth/refresh', {}, { withCredentials: true });
+        const response = await axios.post(
+          `${import.meta.env.VITE_API_URL || ''}/auth/refresh`,
+          {},
+          { withCredentials: true }
+        );
         const { accessToken, user } = response.data;
         
         store.dispatch(setAccessToken(accessToken));

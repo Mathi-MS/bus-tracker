@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, MapPin, Navigation, Info } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -6,13 +6,10 @@ import Map from '../components/Map';
 import api from '../services/api';
 import io from 'socket.io-client';
 
-const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-  withCredentials: true
-});
-
 const TrackPage = () => {
   const { code: urlCode } = useParams();
   const navigate = useNavigate();
+  const socketRef = useRef(null);
   const [session, setSession] = useState(null);
   const [codeInput, setCodeInput] = useState(urlCode || '');
   const [sharerLocation, setSharerLocation] = useState(null);
@@ -27,8 +24,7 @@ const TrackPage = () => {
       setSession(res.data);
       setIsTracking(true);
       setError('');
-      
-      socket.emit('join-session', { code: res.data.code, role: 'viewer' });
+      socketRef.current.emit('join-session', { code: res.data.code, role: 'viewer' });
     } catch (err) {
       setError('Active session not found. Please check the code.');
       setIsTracking(false);
@@ -36,31 +32,32 @@ const TrackPage = () => {
   };
 
   useEffect(() => {
-    if (urlCode) {
-      joinSession(urlCode);
-    }
-  }, [urlCode]);
+    socketRef.current = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+    });
+    const socket = socketRef.current;
 
-  useEffect(() => {
-    const handleLocationBroadcast = (location) => {
+    socket.on('location-broadcast', (location) => {
       setSharerLocation(location);
       setPath(prev => [...prev, location]);
-    };
+    });
 
-    const handleSessionEnded = () => {
+    socket.on('session-ended', () => {
       setIsTracking(false);
       setSession(null);
       setError('The sharing session has ended.');
-    };
-
-    socket.on('location-broadcast', handleLocationBroadcast);
-    socket.on('session-ended', handleSessionEnded);
+    });
 
     return () => {
-      socket.off('location-broadcast');
-      socket.off('session-ended');
+      socket.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    if (urlCode && socketRef.current) {
+      joinSession(urlCode);
+    }
+  }, [urlCode]);
 
   useEffect(() => {
     // Get initial position immediately

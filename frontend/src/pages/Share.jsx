@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, Share, StopCircle, RefreshCw, Users, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -6,25 +6,30 @@ import Map from '../components/Map';
 import api from '../services/api';
 import io from 'socket.io-client';
 
-const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-  withCredentials: true
-});
-
 const SharePage = () => {
   const navigate = useNavigate();
+  const socketRef = useRef(null);
   const [session, setSession] = useState(null);
   const [location, setLocation] = useState(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [isSharing, setIsSharing] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    socketRef.current = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+    });
+    const socket = socketRef.current;
+    socket.on('viewer-count-update', (count) => setViewerCount(count));
+    return () => socket.disconnect();
+  }, []);
+
   const startSharing = async () => {
     try {
       const res = await api.post('/tracking/start');
       setSession(res.data);
       setIsSharing(true);
-      
-      socket.emit('join-session', { code: res.data.code, role: 'sharer' });
+      socketRef.current.emit('join-session', { code: res.data.code, role: 'sharer' });
     } catch (error) {
       console.error('Failed to start sharing');
     }
@@ -34,7 +39,7 @@ const SharePage = () => {
     if (!session) return;
     try {
       await api.post('/tracking/stop', { code: session.code });
-      socket.emit('stop-sharing', { code: session.code });
+      socketRef.current.emit('stop-sharing', { code: session.code });
       setIsSharing(false);
       setSession(null);
       navigate('/');
@@ -47,15 +52,12 @@ const SharePage = () => {
     const newLocation = [pos.coords.latitude, pos.coords.longitude];
     setLocation(newLocation);
     if (isSharing && session) {
-      socket.emit('location-update', { code: session.code, location: newLocation });
+      socketRef.current.emit('location-update', { code: session.code, location: newLocation });
     }
   }, [isSharing, session]);
 
   useEffect(() => {
-    // Get initial position immediately
-    navigator.geolocation.getCurrentPosition((pos) => {
-      updateLocation(pos);
-    });
+    navigator.geolocation.getCurrentPosition(updateLocation);
 
     const watchId = navigator.geolocation.watchPosition(updateLocation, (err) => console.error(err), {
       enableHighAccuracy: true,
@@ -63,12 +65,7 @@ const SharePage = () => {
       timeout: 10000,
     });
 
-    socket.on('viewer-count-update', (count) => setViewerCount(count));
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-      socket.off('viewer-count-update');
-    };
+    return () => navigator.geolocation.clearWatch(watchId);
   }, [updateLocation]);
 
   const copyLink = () => {

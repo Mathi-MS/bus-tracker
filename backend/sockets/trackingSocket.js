@@ -1,12 +1,13 @@
 const TrackingSession = require('../models/TrackingSession');
 
 const setupTrackingSocket = (io) => {
-  io.on('connection', (socket) => {
-    console.log('Client connected:', socket.id);
+  // Track socket metadata for cleanup on disconnect
+  const socketMeta = {};
 
+  io.on('connection', (socket) => {
     socket.on('join-session', async ({ code, role }) => {
       socket.join(code);
-      console.log(`Socket ${socket.id} joined session ${code} as ${role}`);
+      socketMeta[socket.id] = { code, role };
 
       if (role === 'viewer') {
         const session = await TrackingSession.findOneAndUpdate(
@@ -21,11 +22,7 @@ const setupTrackingSocket = (io) => {
     });
 
     socket.on('location-update', ({ code, location }) => {
-      // Broadcast location to everyone in the room except sender (sharer)
       socket.to(code).emit('location-broadcast', location);
-      
-      // Optionally update DB (throttled)
-      // For performance, we usually update DB less frequently than we broadcast
     });
 
     socket.on('stop-sharing', async ({ code }) => {
@@ -35,6 +32,7 @@ const setupTrackingSocket = (io) => {
 
     socket.on('leave-session', async ({ code, role }) => {
       socket.leave(code);
+      delete socketMeta[socket.id];
       if (role === 'viewer') {
         const session = await TrackingSession.findOneAndUpdate(
           { code, status: 'active' },
@@ -42,13 +40,24 @@ const setupTrackingSocket = (io) => {
           { new: true }
         );
         if (session) {
-          io.to(code).emit('viewer-count-update', session.viewerCount > 0 ? session.viewerCount : 0);
+          io.to(code).emit('viewer-count-update', Math.max(0, session.viewerCount));
         }
       }
     });
 
-    socket.on('disconnect', () => {
-      console.log('Client disconnected:', socket.id);
+    socket.on('disconnect', async () => {
+      const meta = socketMeta[socket.id];
+      if (meta?.role === 'viewer') {
+        const session = await TrackingSession.findOneAndUpdate(
+          { code: meta.code, status: 'active' },
+          { $inc: { viewerCount: -1 } },
+          { new: true }
+        );
+        if (session) {
+          io.to(meta.code).emit('viewer-count-update', Math.max(0, session.viewerCount));
+        }
+      }
+      delete socketMeta[socket.id];
     });
   });
 };
