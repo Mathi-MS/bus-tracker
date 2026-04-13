@@ -24,7 +24,8 @@ const allowedOrigins = [
   'http://localhost:5178',
   'http://localhost:5179',
   'http://localhost:5180',
-];
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 
 const io = new Server(server, {
   cors: {
